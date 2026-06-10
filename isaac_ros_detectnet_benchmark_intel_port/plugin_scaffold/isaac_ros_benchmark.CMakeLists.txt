@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 3.22.1)
+project(isaac_ros_benchmark LANGUAGES C CXX)
+
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_python REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rclcpp_components REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(vision_msgs REQUIRED)
+
+ament_python_install_package(${PROJECT_NAME})
+
+add_library(detectnet_openvino_node SHARED src/detectnet_openvino_node.cpp)
+target_compile_features(detectnet_openvino_node PUBLIC cxx_std_17)
+target_include_directories(detectnet_openvino_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+ament_target_dependencies(detectnet_openvino_node
+  rclcpp
+  rclcpp_components
+  sensor_msgs
+  vision_msgs)
+
+rclcpp_components_register_nodes(detectnet_openvino_node "isaac_ros_benchmark::DetectNetOpenVINONode")
+set(node_plugins "${node_plugins}isaac_ros_benchmark::DetectNetOpenVINONode;$<TARGET_FILE:detectnet_openvino_node>\n")
+
+install(TARGETS detectnet_openvino_node
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin)
+
+install(DIRECTORY include/
+  DESTINATION include)
+
+install(PROGRAMS
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+ament_index_has_resource(HAS_ISAAC_ROS_COMMON isaac_ros_common_cmake_path isaac_ros_common)
+if(HAS_ISAAC_ROS_COMMON)
+  ament_index_get_resource(ISAAC_ROS_COMMON_CMAKE_PATH isaac_ros_common_cmake_path isaac_ros_common)
+  include("${ISAAC_ROS_COMMON_CMAKE_PATH}/isaac_ros_common-version-info.cmake")
+  generate_version_info(${PROJECT_NAME})
+endif()
+
+ament_package()

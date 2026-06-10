@@ -1,15 +1,46 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """Performance test for DOPE Pose Estimation on Intel via OpenVINO."""
-import os, time
+import os
+import time
+
 from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
+
 from ros2_benchmark import Resolution, ROS2BenchmarkConfig, ROS2BenchmarkTest
 
 IMAGE_RESOLUTION = Resolution(1920, 1080)
 NETWORK_RESOLUTION = Resolution(640, 480)
 PIPELINE_RESOLUTION = NETWORK_RESOLUTION
 ROSBAG_PATH = 'datasets/r2b_dataset/r2b_storage'
+
+
+def _env_int(name: str, default: int, minimum: int = 0) -> int:
+    """Parse integer environment variable with clamping."""
+    raw = os.environ.get(name, str(default))
+    try:
+        return max(int(raw), minimum)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float, minimum: float = 0.0) -> float:
+    """Parse float environment variable with clamping."""
+    raw = os.environ.get(name, str(default))
+    try:
+        return max(float(raw), minimum)
+    except (TypeError, ValueError):
+        return default
+
+
+OV_DEVICE = os.environ.get('OV_DEVICE', os.environ.get('OPENVINO_DEVICE', 'CPU'))
+OV_NUM_INFER_THREADS = _env_int('OV_NUM_INFER_THREADS', 0)
+OV_INIT_WAIT_SEC = _env_float('OV_INIT_WAIT_SEC', 3.0)
+
+# Tune benchmark search space and buffering based on platform capability.
+R2B_PUBLISHER_UPPER_FPS = _env_float('R2B_PUBLISHER_UPPER_FPS', 80.0)
+R2B_PUBLISHER_LOWER_FPS = _env_float('R2B_PUBLISHER_LOWER_FPS', 10.0)
+R2B_PLAYBACK_BUFFER_SIZE = _env_int('R2B_PLAYBACK_BUFFER_SIZE', 100, minimum=1)
 
 def launch_setup(container_prefix, container_sigterm_timeout):
     assets_root = os.path.join(
@@ -39,8 +70,10 @@ def launch_setup(container_prefix, container_sigterm_timeout):
         ComposableNode(name='DopeOpenVINONode', namespace=ns, package='isaac_ros_benchmark',
             plugin='isaac_ros_benchmark::DopeOpenVINONode',
             parameters=[{'model_path': model_path, 'score_threshold': 0.3, 'object_name': 'ketchup',
-                         'network_width': 640, 'network_height': 480, 'openvino_device': 'CPU',
-                         'image_mean': [0.5, 0.5, 0.5], 'image_stddev': [0.5, 0.5, 0.5]}]),
+                         'network_width': 640, 'network_height': 480, 'openvino_device': OV_DEVICE,
+                         'num_infer_threads': OV_NUM_INFER_THREADS,
+                         'image_mean': [0.5, 0.5, 0.5], 'image_stddev': [0.5, 0.5, 0.5]}],
+            remappings=[('dope_detections', 'dope/detections')]),
     ]
     return [ComposableNodeContainer(name='container', namespace=ns, package='rclcpp_components',
         executable='component_container_mt', prefix=container_prefix,
@@ -53,9 +86,20 @@ class TestDopeIntel(ROS2BenchmarkTest):
     config = ROS2BenchmarkConfig(
         benchmark_name='Isaac ROS DOPE Benchmark (Intel OpenVINO)',
         input_data_path=ROSBAG_PATH, input_data_start_time=0.0, input_data_end_time=4.0,
-        publisher_upper_frequency=300.0, publisher_lower_frequency=10.0,
-        playback_message_buffer_size=200,
-        custom_report_info={'data_resolution': IMAGE_RESOLUTION, 'network_resolution': NETWORK_RESOLUTION})
-    OV_INIT_WAIT_SEC = 3
-    def pre_benchmark_hook(self): time.sleep(self.OV_INIT_WAIT_SEC)
-    def test_benchmark(self): self.run_benchmark()
+        publisher_upper_frequency=R2B_PUBLISHER_UPPER_FPS,
+        publisher_lower_frequency=R2B_PUBLISHER_LOWER_FPS,
+        playback_message_buffer_size=R2B_PLAYBACK_BUFFER_SIZE,
+        custom_report_info={
+            'data_resolution': IMAGE_RESOLUTION,
+            'network_resolution': NETWORK_RESOLUTION,
+            'openvino_device': OV_DEVICE,
+            'num_infer_threads': OV_NUM_INFER_THREADS,
+        })
+
+    OV_INIT_WAIT_SEC = OV_INIT_WAIT_SEC
+
+    def pre_benchmark_hook(self):
+        time.sleep(self.OV_INIT_WAIT_SEC)
+
+    def test_benchmark(self):
+        self.run_benchmark()

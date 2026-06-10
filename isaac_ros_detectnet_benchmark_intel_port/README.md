@@ -1,107 +1,84 @@
 # Isaac ROS DetectNet Benchmark - Intel Port
 
-This folder contains a standalone Intel benchmark script for DetectNet (PeopleNet):
-- `isaac_ros_detectnet_intel.py`
+This folder contains a complete, self-contained setup for running the DetectNet (PeopleNet) benchmark on Intel CPU/iGPU systems using OpenVINO.
 
-It follows the same proven workflow as AprilTag and CenterPose:
-1. Run benchmark scripts with `launch_test`.
-2. Use Intel-ported `isaac_ros_benchmark` source for OpenVINO nodes.
-3. Avoid building unmodified CUDA-dependent NVIDIA stack on Intel-only systems.
+## Contents
 
-## What this script expects
-- OpenVINO composable node: `isaac_ros_benchmark::DetectNetOpenVINONode`
-- `ros2_benchmark`
-- `image_proc`
-- Model: `src/ros2_benchmark/assets/models/peoplenet/peoplenet.xml`
-- Dataset: `src/ros2_benchmark/assets/datasets/r2b_dataset/r2b_storage`
+- **setup_detectnet_intel.sh** — One-command setup script that configures entire environment
+- **isaac_ros_detectnet_intel.py** — Benchmark test script  
+- **plugin_scaffold/** — Minimal Intel DetectNetOpenVINONode plugin implementation
+  - `detectnet_openvino_node.hpp` — Plugin header
+  - `detectnet_openvino_node.cpp` — Plugin implementation (publishes Detection2DArray)
+  - `isaac_ros_benchmark.CMakeLists.txt` — Intel-compatible CMake (no CUDA)
+  - `isaac_ros_benchmark.package.xml` — Trimmed dependencies
 
-## Setup Instructions
-
-### 1) Create ROS workspace and download source
+## Quickstart
 
 ```bash
-mkdir -p ~/ros2_ws/src
-cd ~/ros2_ws/src
-
-# NVIDIA benchmark framework repo
-git clone https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark.git
-
-# NVIDIA benchmark runner repo
-git clone https://github.com/NVIDIA-ISAAC-ROS/ros2_benchmark.git
+cd /path/to/this/folder
+./setup_detectnet_intel.sh
 ```
 
-### 2) Replace benchmark source with Intel-ported code
+This script:
+1. Installs system dependencies (apt packages)
+2. Installs Python runtime libraries (OpenVINO, NumPy, OpenCV)
+3. Fetches NVIDIA source repositories (isaac_ros_benchmark, ros2_benchmark)
+4. Installs the Intel DetectNet plugin scaffold
+5. Patches CMake to make NVIDIA-specific dependencies optional
+6. Downloads r2b_dataset from NVIDIA NGC
+7. Builds all packages with colcon
+8. Prints the exact command to run the benchmark
 
-This script requires the Intel OpenVINO node implementation (`DetectNetOpenVINONode`) that is not available in stock NVIDIA source.
+## Running the Benchmark Manually
 
-```bash
-# Option A: replace with your local Intel-port workspace copy
-rm -rf ~/ros2_ws/src/isaac_ros_benchmark
-cp -r /home/intel/isaac_ros_benchmark ~/ros2_ws/src/isaac_ros_benchmark
-
-# Option B: clone your Intel fork directly
-# git clone https://github.com/<your-user>/<your-intel-fork>.git ~/ros2_ws/src/isaac_ros_benchmark
-```
-
-### 3) Copy this standalone benchmark script
-
-```bash
-cp /path/to/this/folder/isaac_ros_detectnet_intel.py \
-  ~/ros2_ws/src/isaac_ros_benchmark/benchmarks/isaac_ros_detectnet_benchmark/scripts/
-```
-
-### 4) Install runtime dependencies
-
-```bash
-sudo apt update
-sudo apt install -y \
-  python3-colcon-common-extensions \
-  ros-jazzy-image-proc \
-  ros-jazzy-vision-msgs \
-  ros-jazzy-launch-testing \
-  ros-jazzy-launch-testing-ament-cmake
-
-pip install --user openvino numpy opencv-python
-```
-
-### 5) Build required packages
-
-```bash
-cd ~/ros2_ws
-source /opt/ros/jazzy/setup.bash
-colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
-```
-
-### 6) Generate DetectNet synthetic OpenVINO model
-
-```bash
-cd ~/ros2_ws/src/isaac_ros_benchmark
-export ISAAC_ROS_WS=~/ros2_ws
-python3 scripts/create_detectnet_model.py
-```
-
-### 7) Ensure dataset is available
-
-Place the r2b dataset in:
-
-`~/ros2_ws/src/ros2_benchmark/assets/datasets/r2b_dataset/r2b_storage`
-
-### 8) Run the DetectNet Intel benchmark
+After setup completes, the printed command will look like:
 
 ```bash
 cd ~/ros2_ws
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 export ISAAC_ROS_WS=~/ros2_ws
-
+export OV_DEVICE=CPU
+export OV_NUM_INFER_THREADS=8
+export R2B_PUBLISHER_UPPER_FPS=80
+export R2B_PLAYBACK_BUFFER_SIZE=100
 launch_test src/isaac_ros_benchmark/benchmarks/isaac_ros_detectnet_benchmark/scripts/isaac_ros_detectnet_intel.py
 ```
 
-### 9) Collect results
+## Collecting Results
 
-Outputs are available in terminal and `/tmp/r2b-log-*.json`.
+The benchmark outputs JSON metrics to `/tmp/r2b-log-*.json`:
 
 ```bash
-mkdir -p ~/ros2_ws/src/isaac_ros_benchmark/results
-cp /tmp/r2b-log-*.json ~/ros2_ws/src/isaac_ros_benchmark/results/
+cat /tmp/r2b-log-*.json | python3 -m json.tool | grep -E "MEAN_FRAME_RATE|CPU_UTILIZATION|MEAN_LATENCY"
 ```
+
+## Environment Variables for Tuning
+
+The benchmark respects these OpenVINO environment variables:
+
+- `OV_DEVICE` — Device target: `"CPU"` (default), `"GPU"`, `"AUTO:GPU,CPU"`  
+- `OV_NUM_INFER_THREADS` — Manual thread count (0 = auto, default)
+- `R2B_PUBLISHER_UPPER_FPS` — Data publication rate upper limit (default: 80)
+- `R2B_PLAYBACK_BUFFER_SIZE` — Message sync buffer (default: 100)
+
+## Scope & Limitations
+
+The scaffolded plugin included here makes the benchmark pipeline runnable and measurable on Intel CPU/iGPU systems. It publishes `vision_msgs/Detection2DArray` outputs for throughput/latency benchmarking, but it is **not** a full accuracy-focused DetectNet inference implementation. For production accuracy, integrate an actual OpenVINO model.
+
+## Dataset Source
+
+The r2b_dataset is downloaded from NVIDIA NGC:
+- Metadata: https://api.ngc.nvidia.com/v2/resources/nvidia/isaac/r2bdataset2023/versions/2/files/r2b_storage/metadata.yaml
+- Data file (2.9GB): https://api.ngc.nvidia.com/v2/resources/nvidia/isaac/r2bdataset2023/versions/2/files/r2b_storage/r2b_storage_0.db3
+
+## Troubleshooting
+
+**Build fails with "isaac_ros_common not found"**  
+This is expected and handled by the CMake patches. The build continues without the NVIDIA-only dependency.
+
+**Benchmark script not found**  
+Ensure `colcon build` completed successfully and you sourced `install/setup.bash`.
+
+**Import errors in benchmark script**  
+Verify `openvino`, `numpy`, and `opencv-python` are installed: `pip3 show openvino`
