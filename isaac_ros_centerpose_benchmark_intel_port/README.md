@@ -1,100 +1,56 @@
 # Isaac ROS CenterPose Benchmark - Intel Port
 
-This folder contains a standalone Intel benchmark script for CenterPose:
-- `isaac_ros_centerpose_intel.py`
+This folder now includes a complete Intel-friendly setup path that works on a clean machine without requiring an NVIDIA GPU.
 
-The workflow is based on the successful AprilTag lessons:
-1. Use `launch_test` to run benchmark test scripts.
-2. Avoid trying to build the full unmodified NVIDIA workspace on Intel-only machines (CUDA/NVCC dependency conflicts).
-3. Use the Intel-ported `isaac_ros_benchmark` source for the OpenVINO node.
+Complete runnable paths with setup scripts in this repository:
+- isaac_ros_centerpose_benchmark_intel_port/README.md
+- isaac_ros_apriltag_benchmark_intel_port/README.md
 
-## What this script expects
-The script uses the Intel OpenVINO composable node:
-- `isaac_ros_benchmark::CenterPoseOpenVINONode`
+## Included Files
 
-It also expects:
-- `ros2_benchmark`
-- `image_proc`
-- CenterPose synthetic model at:
-  `src/ros2_benchmark/assets/models/centerpose_shoe/centerpose_shoe.xml`
-- Dataset at:
-  `src/ros2_benchmark/assets/datasets/r2b_dataset/r2b_storage`
+- `isaac_ros_centerpose_intel.py`: CenterPose benchmark script
+- `setup_centerpose_intel.sh`: one-command setup (downloads sources, patches/builds workspace, downloads dataset)
+- `plugin_scaffold/*`: minimal `CenterPoseOpenVINONode` plugin files needed by the script
+- `OPENVINO_OPTIMIZATION.md`: runtime tuning knobs
 
-## Setup Instructions
+## Important Scope Note
 
-### 1) Create ROS workspace and download source
+The scaffolded plugin included here makes the benchmark pipeline runnable and measurable on Intel CPU/iGPU systems.
+It publishes `vision_msgs/Detection3DArray` outputs for throughput/latency benchmarking, but it is not a full accuracy-focused CenterPose inference implementation.
 
-```bash
-mkdir -p ~/ros2_ws/src
-cd ~/ros2_ws/src
+## Prerequisites
 
-# NVIDIA benchmark framework repo
-git clone https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark.git
+- Ubuntu 24.04 (recommended) or 22.04
+- ROS 2 Jazzy installed at `/opt/ros/jazzy` (or set `ROS_DISTRO` to your distro)
+- `sudo` access for package installation
 
-# NVIDIA benchmark runner repo
-git clone https://github.com/NVIDIA-ISAAC-ROS/ros2_benchmark.git
-```
+## Quickstart (Recommended)
 
-### 2) Replace benchmark source with Intel-ported code
-
-The CenterPose Intel benchmark script requires the Intel OpenVINO node implementation (`CenterPoseOpenVINONode`) that is not available in the stock NVIDIA repository.
-
-Copy the Intel-ported `isaac_ros_benchmark` package source from this repo into your workspace (or clone your Intel fork directly in place of the NVIDIA one):
+From this folder:
 
 ```bash
-# Option A: replace with your local Intel port source
-rm -rf ~/ros2_ws/src/isaac_ros_benchmark
-cp -r /home/intel/isaac_ros_benchmark ~/ros2_ws/src/isaac_ros_benchmark
-
-# Option B: clone your Intel fork directly (recommended for clean setup)
-# git clone https://github.com/<your-user>/<your-intel-fork>.git ~/ros2_ws/src/isaac_ros_benchmark
+chmod +x setup_centerpose_intel.sh
+./setup_centerpose_intel.sh
 ```
 
-### 3) Copy this standalone benchmark script
+Optional custom workspace path:
 
 ```bash
-cp /path/to/this/folder/isaac_ros_centerpose_intel.py \
-  ~/ros2_ws/src/isaac_ros_benchmark/benchmarks/isaac_ros_centerpose_benchmark/scripts/
+./setup_centerpose_intel.sh /path/to/ros2_ws
 ```
 
-### 4) Install runtime dependencies
+The script handles:
 
-```bash
-sudo apt update
-sudo apt install -y \
-  python3-colcon-common-extensions \
-  ros-jazzy-image-proc \
-  ros-jazzy-vision-msgs \
-  ros-jazzy-launch-testing \
-  ros-jazzy-launch-testing-ament-cmake
+1. Installing required apt and pip dependencies
+2. Fetching `isaac_ros_benchmark` and `ros2_benchmark` (uses `git` when available, archive download otherwise)
+3. Installing this benchmark script and plugin scaffold into the workspace
+4. Patching `ros2_benchmark` CMake files for environments without `isaac_ros_common`
+5. Downloading `r2b_storage` dataset files from NGC into:
+   `~/ros2_ws/src/ros2_benchmark/assets/datasets/r2b_dataset/r2b_storage`
+6. Building required packages with `colcon`
+7. Printing the exact run command
 
-pip install --user openvino numpy opencv-python
-```
-
-### 5) Build only the required packages
-
-```bash
-cd ~/ros2_ws
-source /opt/ros/jazzy/setup.bash
-
-colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
-```
-
-### 6) Generate CenterPose synthetic OpenVINO model
-
-```bash
-cd ~/ros2_ws/src/isaac_ros_benchmark
-export ISAAC_ROS_WS=~/ros2_ws
-python3 scripts/create_centerpose_model.py
-```
-
-### 7) Ensure dataset is available
-
-Place the r2b dataset in:
-
-`~/ros2_ws/src/ros2_benchmark/assets/datasets/r2b_dataset/r2b_storage`
-
-### 8) Run the CenterPose Intel benchmark
+## Manual Run Command
 
 ```bash
 cd ~/ros2_ws
@@ -102,22 +58,31 @@ source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 export ISAAC_ROS_WS=~/ros2_ws
 
+# Optional tuning
+export OV_DEVICE=CPU
+export OV_NUM_INFER_THREADS=8
+export R2B_PUBLISHER_UPPER_FPS=80
+export R2B_PLAYBACK_BUFFER_SIZE=100
+
 launch_test src/isaac_ros_benchmark/benchmarks/isaac_ros_centerpose_benchmark/scripts/isaac_ros_centerpose_intel.py
 ```
 
-### 9) Collect results
+## Results
 
-The benchmark report is emitted to:
-- Terminal output
+Benchmark reports are written to:
+
+- terminal output
 - `/tmp/r2b-log-*.json`
 
-You can archive it with:
+Archive results:
 
 ```bash
 mkdir -p ~/ros2_ws/src/isaac_ros_benchmark/results
 cp /tmp/r2b-log-*.json ~/ros2_ws/src/isaac_ros_benchmark/results/
 ```
 
-## Notes
-- If OpenVINO GPU runtime is not available, edit the script parameter `openvino_device` from `GPU` to `CPU`.
-- If throughput search overshoots on your platform, reduce `publisher_upper_frequency` to `300.0`.
+## Dataset Source Links Used by Setup Script
+
+- `https://api.ngc.nvidia.com/v2/resources/nvidia/isaac/r2bdataset2023/versions/2/files/r2b_storage/metadata.yaml`
+- `https://api.ngc.nvidia.com/v2/resources/nvidia/isaac/r2bdataset2023/versions/2/files/r2b_storage/r2b_storage_0.db3`
+
